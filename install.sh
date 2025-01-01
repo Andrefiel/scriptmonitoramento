@@ -7,51 +7,61 @@ sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y
 sudo hostnamectl set-hostname SRV-MONITORAMENTO
 echo "192.168.1.110 SRV-MONITORAMENTO" | sudo tee -a /etc/hosts
 
-# Configuração de IP fixo com Netplan
-cat <<EOF | sudo tee /etc/netplan/01-netcfg.yaml
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    ens33:  # Substitua 'ens33' pelo nome da sua interface de rede
-      dhcp4: no
-      addresses: [192.168.1.110/24]
-      gateway4: 192.168.1.1
-      nameservers:
-        addresses: [192.168.1.7, 192.168.1.2, 1.1.1.1]
-EOF
-
-# Aplicar configurações de rede
-sudo netplan apply
-
 # Instalação do Nginx e Certbot
-sudo apt install -y nginx
-sudo apt install -y certbot python3-certbot-nginx
+sudo apt install -y nginx certbot python3-certbot-nginx
+
+##cockpit
+apt install cockpit -y
+systemctl start cockpit cockpit.socket && systemctl enable cockpit cockpit.socket
 
 # Instalação do MySQL com senha
 sudo apt install -y mysql-server
 sudo mysql_secure_installation <<EOF
 
 Y
-senha DB
-senha DB
+Argos@DB
+Argos@DB
 Y
 Y
 Y
 Y
 EOF
 
+systemctl enable mysql
+systemctl start mysql
+
 # Instalação do Zabbix completo (ajuste a versão conforme necessário)
-wget https://cdn.zabbix.com/zabbix/binaries/stable/6.4/ubuntu/$(lsb_release -cs)/zabbix-release_6.4-1+$(lsb_release -cs)_all.deb
-sudo dpkg -i zabbix-release_6.4-1+$(lsb_release -cs)_all.deb
-sudo apt update
-sudo apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-agent
+apt-get install -y language-pack-en language-pack-pt
+wget https://repo.zabbix.com/zabbix/7.2/release/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.2+ubuntu24.04_all.deb
+dpkg -i zabbix-release_latest_7.2+ubuntu24.04_all.deb
+apt update
+apt install zabbix-server-mysql zabbix-frontend-php zabbix-nginx-conf zabbix-sql-scripts zabbix-agent
+
+# mysql -uroot -pArgos@DB
+mysql> create database zabbix character set utf8mb4 collate utf8mb4_bin;
+mysql> create user zabbix@localhost identified by 'Arg0s@zabbix';
+mysql> grant all privileges on zabbix.* to zabbix@localhost;
+mysql> set global log_bin_trust_function_creators = 1;
+mysql> quit;
+
+zcat /usr/share/zabbix/sql-scripts/mysql/server.sql.gz | mysql --default-character-set=utf8mb4 -uzabbix -p zabbix
+
+# mysql -uroot -pArgos@DB
+mysql> set global log_bin_trust_function_creators = 0;
+mysql> quit;
+
+#Editar arquivo /etc/zabbix/zabbix_server.conf
+#DBPassword=Argos@DB
 
 # Instalação do Grafana
-sudo apt install -y software-properties-common
-sudo add-apt-repository ppa:grafana/stable -y
-sudo apt update
-sudo apt install -y grafana
+sudo apt-get install -y apt-transport-https software-properties-common wget
+sudo mkdir -p /etc/apt/keyrings/
+wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/grafana.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee -a /etc/apt/sources.list.d/grafana.list
+# Updates the list of available packages
+sudo apt-get update
+sudo apt-get install grafana -y
+sudo systemctl start grafana-server && sudo systemctl enable grafana-server
 
 # Instalação do NetBox (ajuste a versão conforme necessário)
 sudo apt install -y python3-pip python3-dev libpq-dev git 
@@ -63,13 +73,17 @@ pip3 install -r requirements.txt
 bash <(curl -Ss https://my-netdata.io/kickstart.sh)
 
 # Criação do usuário 'andre' e adição ao grupo sudoers
-sudo adduser andre --gecos "" --disabled-password <<EOF
+sudo adduser andre.fiel --gecos "" --disabled-password <<EOF
 Argos@2025
 Argos@2025
 EOF
 
+##SSMTP
+
+apt-get install ssmtp snmp
+
 # Adicionando o usuário 'andre' ao grupo sudo
-sudo usermod -aG sudo andre
+sudo usermod -aG sudo andre.fiel
 
 # Finalização com atualização e limpeza novamente
 sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y
