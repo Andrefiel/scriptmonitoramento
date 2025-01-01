@@ -80,7 +80,7 @@ EOF
 
 ##SSMTP
 
-apt-get install ssmtp snmp
+apt-get install ssmtp snmp -y
 
 # Adicionando o usuário 'andre' ao grupo sudo
 sudo usermod -aG sudo andre.fiel
