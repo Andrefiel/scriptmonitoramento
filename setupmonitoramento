@@ -1,0 +1,302 @@
+#!/bin/bash
+
+# Diretório base para os volumes
+BASE_DIR="/docker/sistemas"
+
+# Variáveis do DuckDNS
+DUCKDNS_DOMAIN="meudominio.duckdns.org"  # Substitua pelo seu domínio DuckDNS
+DUCKDNS_TOKEN="seu_token_duckdns"        # Substitua pelo seu token DuckDNS
+
+# Criar estrutura de pastas
+mkdir -p $BASE_DIR/{zabbix-db,grafana-storage,netbox-db,glpi-db,nginx-proxy-manager/data,nginx-proxy-manager/letsencrypt/n8n/pg_data}
+
+# Criar arquivo docker-compose.yml
+cat <<EOF > $BASE_DIR/docker-compose.yml
+version: '3.7'
+
+services:
+  duckdns:
+    image: linuxserver/duckdns:latest
+    container_name: duckdns
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Sao_Paulo
+      - SUBDOMAINS=$DUCKDNS_DOMAIN
+      - TOKEN=$DUCKDNS_TOKEN
+    restart: unless-stopped
+    networks:
+      - zabbix-net
+
+  zabbix-db:
+    image: mysql:8.0
+    container_name: zabbix-db
+    environment:
+      MYSQL_DATABASE: zabbix
+      MYSQL_USER: zabbix
+      MYSQL_PASSWORD: zabbix
+      MYSQL_ROOT_PASSWORD: zabbix
+    volumes:
+      - $BASE_DIR/zabbix-db:/var/lib/mysql
+    networks:
+      - zabbix-net
+
+  zabbix-server:
+    image: zabbix/zabbix-server-mysql:latest
+    container_name: zabbix-server
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      MYSQL_DATABASE: zabbix
+      MYSQL_USER: zabbix
+      MYSQL_PASSWORD: zabbix
+      MYSQL_ROOT_PASSWORD: zabbix
+    ports:
+      - "10051:10051"
+    depends_on:
+      - zabbix-db
+    networks:
+      - zabbix-net
+
+  zabbix-agent2:
+    image: zabbix/zabbix-agent2:latest
+    container_name: zabbix-agent2
+    environment:
+      ZBX_HOSTNAME: zabbix-agent2
+      ZBX_SERVER_HOST: zabbix-server
+    ports:
+      - "10050:10050"
+    networks:
+      - zabbix-net
+
+  zabbix-frontend:
+    image: zabbix/zabbix-web-nginx-mysql:latest
+    container_name: zabbix-frontend
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      MYSQL_DATABASE: zabbix
+      MYSQL_USER: zabbix
+      MYSQL_PASSWORD: zabbix
+      ZBX_SERVER_HOST: zabbix-server
+    ports:
+      - "8080:8080"
+    depends_on:
+      - zabbix-db
+      - zabbix-server
+    networks:
+      - zabbix-net
+
+  zabbix-proxy:
+    image: zabbix/zabbix-proxy-mysql:latest
+    container_name: zabbix-proxy
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      MYSQL_DATABASE: zabbix
+      MYSQL_USER: zabbix
+      MYSQL_PASSWORD: zabbix
+      ZBX_SERVER_HOST: zabbix-server
+    depends_on:
+      - zabbix-db
+      - zabbix-server
+    networks:
+      - zabbix-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - $BASE_DIR/grafana-storage:/var/lib/grafana
+    networks:
+      - zabbix-net
+
+  netbox:
+    image: netboxcommunity/netbox:latest
+    container_name: netbox
+    environment:
+      DB_HOST: netbox-db
+      DB_NAME: netbox
+      DB_USER: netbox
+      DB_PASSWORD: netbox
+      REDIS_HOST: netbox-redis
+    ports:
+      - "8000:8000"
+    depends_on:
+      - netbox-db
+      - netbox-redis
+    networks:
+      - zabbix-net
+
+  netbox-db:
+    image: postgres:13
+    container_name: netbox-db
+    environment:
+      POSTGRES_DB: netbox
+      POSTGRES_USER: netbox
+      POSTGRES_PASSWORD: netbox
+    volumes:
+      - $BASE_DIR/netbox-db:/var/lib/postgresql/data
+    networks:
+      - zabbix-net
+
+  netbox-redis:
+    image: redis:6.0
+    container_name: netbox-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - zabbix-net
+
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    volumes:
+      - $BASE_DIR/nginx-proxy-manager/data:/data
+      - $BASE_DIR/nginx-proxy-manager/letsencrypt:/etc/letsencrypt
+    depends_on:
+      - zabbix-frontend
+      - grafana
+      - netbox
+    networks:
+      - zabbix-net
+
+  glpi-db:
+    image: mariadb:10.5
+    container_name: glpi-db
+    environment:
+      MYSQL_DATABASE: glpi
+      MYSQL_USER: glpi
+      MYSQL_PASSWORD: glpi
+      MYSQL_ROOT_PASSWORD: glpi
+    volumes:
+      - $BASE_DIR/glpi-db:/var/lib/mysql
+    networks:
+      - zabbix-net
+
+  glpi:
+    image: glpi:latest
+    container_name: glpi
+    environment:
+      DB_HOST: glpi-db
+      MYSQL_DATABASE: glpi
+      MYSQL_USER: glpi
+      MYSQL_PASSWORD: glpi
+    ports:
+      - "8081:80"
+    depends_on:
+      - glpi-db
+    networks:
+      - zabbix-net
+
+  n8n:
+    image: n8nio/n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=user
+      - N8N_BASIC_AUTH_PASSWORD=password
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=n8n
+      - NODE_FUNCTION_ALLOW_EXTERNAL=axios,qs
+      - N8N_SECURE_COOKIE=false
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  db:
+    image: postgres
+    volumes:
+      - $BASE_DIR/n8n/db-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=n8n
+      - POSTGRES_DB=n8n
+    restart: unless-stopped
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    restart: always
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_USER=postgres
+      - DB_POSTGRESDB_SCHEMA=public
+      - DB_POSTGRESDB_PASSWORD=Argos@DB
+#      - N8N_PROTOCOL=https
+#      - N8N_HOST=<n8n.autoize.net>
+#      - VUE_APP_URL_BASE_API=https://<n8n.autoize.net>/
+#      - WEBHOOK_TUNNEL_URL=https://<n8n.autoize.net>/
+#      - WEBHOOK_URL=https://<n8n.autoize.net>/
+#      - N8N_EMAIL_MODE=smtp
+#      - N8N_SMTP_HOST=<smtp.sendgrid.net>
+#      - N8N_SMTP_PORT=<465>
+#      - N8N_SMTP_USER=<apikey>
+#      - N8N_SMTP_PASS=<sendgrid api key>
+#      - N8N_SMTP_SENDER=<n8n@autoize.net>
+#      - N8N_SMTP_SSL=true
+    ports:
+      - 127.0.0.1:5678:5678
+    depends_on:
+      - postgres
+    volumes:
+      - $BASE_DIR/n8n_data:/home/node/.n8n
+
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      - POSTGRES_DB=n8n
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=Argos@DB
+    ports:
+      - 5432:5432
+    volumes:
+      - $BASE_DIR/pg_data:/var/lib/postgresql/data
+      
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    volumes:
+      - /docker/uptime/data:/app/data
+    ports:
+      # <Host Port>:<Container Port>
+      - 3001:3001
+    restart: unless-stopped
+
+volumes:
+  zabbix-db:
+  grafana-storage:
+  netbox-db:
+  glpi-db:
+  nginx-proxy-manager-data:
+  nginx-proxy-manager-letsencrypt:
+  db-data:
+  n8n_data:
+  pg_data:
+
+
+networks:
+  zabbix-net:
+    driver: bridge
+EOF
+
+# Iniciar os serviços com Docker Compose
+cd $BASE_DIR
+docker-compose up -d
+
+echo "Configuração concluída! Acesse os serviços:"
+echo "- Nginx Proxy Manager: http://localhost:81"
+echo "- Zabbix Frontend: http://$DUCKDNS_DOMAIN:8080"
+echo "- Grafana: http://$DUCKDNS_DOMAIN:3000"
+echo "- NetBox: http://$DUCKDNS_DOMAIN:8000"
+echo "- GLPI: http://$DUCKDNS_DOMAIN:8081"
