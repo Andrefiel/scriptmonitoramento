@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+  # Serviço Zabbix Server
+  zabbix-server:
+    image: zabbix/zabbix-server-mysql:latest
+    environment:
+      - DB_SERVER_HOST=zabbix-db
+      - MYSQL_USER=zabbix
+      - MYSQL_PASSWORD=zabbix_password
+      - MYSQL_DB=zabbix
+    volumes:
+      - /docker/zabbix-server:/var/lib/zabbix
+    depends_on:
+      - zabbix-db
+    networks:
+      - zabbix_network
+
+  # Banco de dados MySQL para o Zabbix
+  zabbix-db:
+    image: mysql:5.7
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_USER=zabbix
+      - MYSQL_PASSWORD=zabbix_password
+      - MYSQL_DATABASE=zabbix
+    volumes:
+      - /docker/zabbix-db:/var/lib/mysql
+    networks:
+      - zabbix_network
+
+  # Serviço Zabbix Agent2
+  zabbix-agent2:
+    image: zabbix/zabbix-agent2:latest
+    environment:
+      - ZBX_SERVER_HOST=zabbix-server
+      - ZBX_HOSTNAME=zabbix-agent2
+    volumes:
+      - /docker/zabbix-agent:/etc/zabbix
+    networks:
+      - zabbix_network
+
+  # Serviço Grafana
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin_password
+    volumes:
+      - /docker/grafana:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - zabbix_network
+
+  # Serviço Nginx (Nginx Manager)
+  nginx:
+    image: nginx:latest
+    volumes:
+      - /docker/nginx:/etc/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - zabbix_network
+
+  # Certbot para gerar e renovar certificados SSL
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - /docker/certbot/conf:/etc/letsencrypt
+      - /docker/certbot/www:/var/www/certbot
+    command: certonly --webroot --webroot-path=/var/www/certbot -d example.com --email your-email@example.com --agree-tos --non-interactive
+    networks:
+      - zabbix_network
+
+  # Glpi
+  glpi_app:
+    image: sdbrasil/glpi:10.0.18
+    container_name: glpi-10
+    volumes:
+      - /docker/glpi/config:/etc/glpi
+      - /docker/glpi/documents:/var/lib/glpi/files/data-documents
+      - /docker/glpi/plugins:/usr/share/glpi/plugins
+      - /docker/glpi/marketplace:/usr/share/glpi/marketplace
+      - /docker/glpi/files/_plugins:/var/lib/glpi/files/_plugins
+      - /docker/glpi/backup:/backup
+    networks:
+      - glpi
+    ports:
+      - 8080:80
+
+  glpidb:
+    image: percona/percona-server:8.0
+    container_name: db-glpi-10
+    networks:
+      - glpi
+    volumes:
+      - /docker/glpi/percona/log:/var/log/mysql
+      - /docker/glpi/percona/lib:/var/lib/mysql
+      - /docker/glpi/backup:/backup
+    environment:
+      - MYSQL_ROOT_PASSWORD=ADM@MySQL_GLP1
+      - MYSQL_DATABASE=glpi
+      - MYSQL_USER=glpi
+      - MYSQL_PASSWORD=GLP1_MySQL@10
+      - TZ=America/Fortaleza
+
+networks:
+  zabbix_network:
+    driver: bridge
+  glpi:
+    driver: bridge
+
+volumes:
+  glpi_config:
+  glpi_documents:
+  glpi_plugins:
+  glpi_marketplace:
+  glpi_files_plugins:
+  glpi_backup:
+  glpi_db_log:
+  glpi_db_lib:
+  glpi_db_backup:
