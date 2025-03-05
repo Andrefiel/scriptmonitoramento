@@ -1,0 +1,277 @@
+[5/3 5:40 PM] André TI: version: '3.8'
+
+services:
+  # Banco de Dados para GLPI
+  glpidb:
+    image: percona/percona-server:8.0
+    container_name: db-glpi
+    environment:
+      MYSQL_ROOT_PASSWORD: ${GLPI_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${GLPI_DB}
+      MYSQL_USER: ${GLPI_USER}
+      MYSQL_PASSWORD: ${GLPI_PASSWORD}
+      TZ: America/Fortaleza
+    volumes:
+      - /docker/glpi/percona/log:/var/log/mysql
+      - /docker/glpi/percona/lib:/var/lib/mysql
+      - /docker/glpi/backup:/backup
+    networks:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${GLPI_ROOT_PASSWORD}"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+
+  # GLPI
+  glpi_app:
+    image: sdbrasil/glpi:10.0.18
+    container_name: glpi
+    environment:
+      MYSQL_HOST: glpidb
+      MYSQL_DATABASE: ${GLPI_DB}
+      MYSQL_USER: ${GLPI_USER}
+      MYSQL_PASSWORD: ${GLPI_PASSWORD}
+    volumes:
+      - /docker/glpi/config:/etc/glpi
+      - /docker/glpi/documents:/var/lib/glpi/files/data-documents
+      - /docker/glpi/plugins:/usr/share/glpi/plugins
+      - /docker/glpi/marketplace:/usr/share/glpi/marketplace
+      - /docker/glpi/files/_plugins:/var/lib/glpi/files/_plugins
+      - /docker/glpi/backup:/backup
+    ports:
+      - "8080:80"
+    depends_on:
+      glpidb:
+        condition: service_healthy
+    networks:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+  # Banco de Dados para Zabbix
+  zabbix-db:
+    image: mysql:8.0
+    container_name: zabbix-db
+    environment:
+      MYSQL_DATABASE: ${ZABBIX_DB}
+      MYSQL_USER: ${ZABBIX_USER}
+      MYSQL_PASSWORD: ${ZABBIX_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${ZABBIX_ROOT_PASSWORD}
+    volumes:
+      - /docker/zabbix-db:/var/lib/mysql
+    networks:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${ZABBIX_ROOT_PASSWORD}"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+
+  # Zabbix Server
+  zabbix-server:
+    image: zabbix/zabbix-server-mysql:latest
+    container_name: zabbix-server
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      MYSQL_DATABASE: ${ZABBIX_DB}
+      MYSQL_USER: ${ZABBIX_USER}
+      MYSQL_PASSWORD: ${ZABBIX_PASSWORD}
+    volumes:
+      - /docker/zabbix_server_data:/usr/lib/zabbix
+    ports:
+      - "10051:10051"
+    depends_on:
+      zabbix-db:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  # Zabbix Frontend
+  zabbix-frontend:
+    image: zabbix/zabbix-web-nginx-mysql:latest
+    container_name: zabbix-frontend
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      MYSQL_DATABASE: ${ZABBIX_DB}
+      MYSQL_USER: ${ZABBIX_USER}
+      MYSQL_PASSWORD: ${ZABBIX_PASSWORD}
+      ZBX_SERVER_HOST: zabbix-server
+    ports:
+      - "8081:8080"
+    depends_on:
+      zabbix-db:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
+    networks:
+      - frontend
+    restart: unless-stopped
+
+  # Banco de Dados para Nginx Proxy Manager
+  nginx-db:
+    image: mysql:8.0
+    container_name: nginx-db
+    environment:
+      MYSQL_DATABASE: ${NPM_DB}
+      MYSQL_USER: ${NPM_USER}
+      MYSQL_PASSWORD: ${NPM_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${NPM_ROOT_PASSWORD}
+    volumes:
+      - /docker/nginx-db:/var/lib/mysql
+    networks:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${NPM_ROOT_PASSWORD}"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+
+  # Nginx Proxy Manager
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    environment:
+      DB_MYSQL_HOST: nginx-db
+      DB_MYSQL_PORT: 3306
+      DB_MYSQL_USER: ${NPM_USER}
+      DB_MYSQL_PASSWORD: ${NPM_PASSWORD}
+      DB_MYSQL_NAME: ${NPM_DB}
+    volumes:
+      - /docker/nginx_data:/data
+      - /docker/nginx_letsencrypt:/etc/letsencrypt
+    depends_on:
+      nginx-db:
+        condition: service_healthy
+    networks:
+      - frontend
+    restart: unless-stopped
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+    volumes:
+      - /docker/grafana_data:/var/lib/grafana
+    networks:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+networks:
+  backend:
+  frontend:
+[5/3 5:40 PM] André TI: # Configuração do Banco de Dados do GLPI
+GLPI_ROOT_PASSWORD=Adm@MySQL_GLPI
+GLPI_DB=glpi
+GLPI_USER=glpi
+GLPI_PASSWORD=GLPI_MySQL@10
+
+# Configuração do Banco de Dados do Zabbix
+ZABBIX_DB=zabbix
+ZABBIX_USER=zabbix
+ZABBIX_PASSWORD=Zabbix@DB
+ZABBIX_ROOT_PASSWORD=Zabbix@Root
+
+# Configuração do Banco de Dados do Nginx Proxy Manager
+NPM_DB=nginxproxymanager
+NPM_USER=npmuser
+NPM_PASSWORD=Npm@Password
+NPM_ROOT_PASSWORD=Npm@Root
+
+# Configuração do Grafana
+GRAFANA_USER=admin
+GRAFANA_PASSWORD=Grafana@123
+[5/3 5:40 PM] André TI: docker compose down -v
+docker compose up -d
+[5/3 5:41 PM] André TI: mkdir -p /docker/{glpi,glpi/percona,glpi/backup,zabbix-db,zabbix_server_data,nginx-db,nginx_data,nginx_letsencrypt,grafana_data}
+
+chown -R 1000:1000 /docker
+
+chown -R $(whoami):$(whoami) /docker
+
+chmod -R 777 /docker
+[5/3 5:45 PM] André TI: #!/bin/bash
+
+# ============================
+# 🚀 SCRIPT DE INSTALAÇÃO 🚀
+# ============================
+
+# Atualiza os pacotes do sistema
+echo "🔄 Atualizando o sistema..."
+sudo apt update && sudo apt upgrade -y
+
+# Instala pacotes necessários
+echo "📦 Instalando pacotes essenciais..."
+sudo apt install -y curl ca-certificates gnupg lsb-release unzip
+
+# Adiciona repositório oficial do Docker
+echo "🐳 Adicionando repositório do Docker..."
+sudo mkdir -m 0755 -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo tee /etc/apt/keyrings/docker.asc > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Atualiza lista de pacotes novamente
+echo "🔄 Atualizando pacotes após adicionar repositório do Docker..."
+sudo apt update
+
+# Instala Docker e Docker Compose
+echo "📦 Instalando Docker e Docker Compose..."
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Adiciona usuário ao grupo Docker (evita usar sudo em comandos Docker)
+echo "👤 Adicionando usuário ao grupo Docker..."
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Verifica se Docker foi instalado corretamente
+echo "🐳 Verificando instalação do Docker..."
+docker --version
+docker compose version
+
+# Criando diretórios necessários
+echo "📂 Criando diretórios para volumes Docker..."
+mkdir -p /docker/{glpi,glpi/percona,glpi/backup,zabbix-db,zabbix_server_data,nginx-db,nginx_data,nginx_letsencrypt,grafana_data}
+
+# Ajustando permissões dos diretórios
+echo "🔧 Ajustando permissões dos diretórios..."
+sudo chown -R 1000:1000 /docker
+sudo chmod -R 777 /docker
+
+# Baixando arquivos docker-compose.yml e .env
+echo "📥 Baixando arquivos necessários..."
+curl -o /docker/docker-compose.yml https://raw.githubusercontent.com/seu-repo/docker-compose.yml
+curl -o /docker/.env https://raw.githubusercontent.com/seu-repo/.env
+
+# Iniciando os containers
+echo "🚀 Iniciando os containers Docker..."
+cd /docker
+docker compose up -d
+
+# Exibe os containers em execução
+echo "✅ Ambiente configurado com sucesso! Containers em execução:"
+docker ps
+[5/3 5:45 PM] André TI: nano install.sh
+[5/3 5:45 PM] André TI: chmod +x install.sh
+[5/3 5:45 PM] André TI: ./install.sh
+[5/3 6:05 PM] André TI: sudo docker volume create portainer_data
+sudo docker run -d \
+  -p 9000:9000 \
+  --name portainer \
+  --restart=always \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v portainer_data:/data \
+  portainer/portainer-ce:latest
